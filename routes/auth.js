@@ -1,37 +1,39 @@
-const express = require('express');
-const jwt = require('jsonwebtoken');
-const User = require('../models/User');
+const express = require("express");
+const bcrypt = require("bcryptjs");
+const jwt = require("jsonwebtoken");
+const db = require("../models/database");
 
 const router = express.Router();
-const JWT_SECRET = 'some_super_secret_key';
+const secret = "mysecret"; // Use environment variables for secret in production
 
-router.post('/register', async (req, res) => {
-    const { username, password } = req.body;
-
-    try {
-        const user = new User({ username, password });
-        await user.save();
-        res.json({ status: 'ok' });
-    } catch (error) {
-        res.json({ status: 'error', error: 'Duplicate username' });
+// User registration
+router.post("/register", (req, res) => {
+  const { username, password } = req.body;
+  const hashedPassword = bcrypt.hashSync(password, 8);
+  db.run(
+    "INSERT INTO users (username, password) VALUES (?, ?)",
+    [username, hashedPassword],
+    function (err) {
+      if (err) return res.status(500).send("Error registering the user");
+      res.status(200).send({ auth: true, userId: this.lastID });
     }
+  );
 });
 
-router.post('/login', async (req, res) => {
-    const { username, password } = req.body;
-    const user = await User.findOne({ username });
+// User login
+router.post("/login", (req, res) => {
+  const { username, password } = req.body;
+  db.get("SELECT * FROM users WHERE username = ?", [username], (err, user) => {
+    if (err) return res.status(500).send("Error on the server.");
+    if (!user) return res.status(404).send("No user found.");
 
-    if (!user) {
-        return res.json({ status: 'error', error: 'Invalid username/password' });
-    }
+    const passwordIsValid = bcrypt.compareSync(password, user.password);
+    if (!passwordIsValid)
+      return res.status(401).send({ auth: false, token: null });
 
-    const isPasswordValid = await user.comparePassword(password);
-    if (isPasswordValid) {
-        const token = jwt.sign({ id: user._id }, JWT_SECRET);
-        return res.json({ status: 'ok', token });
-    } else {
-        return res.json({ status: 'error', error: 'Invalid username/password' });
-    }
+    const token = jwt.sign({ id: user.id }, secret, { expiresIn: 86400 }); // 24 hours
+    res.status(200).send({ auth: true, token: token });
+  });
 });
 
 module.exports = router;
